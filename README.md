@@ -6,6 +6,11 @@ automatic reconnection, and per-app routing for Flatpaks.
 
 ## Install
 
+Download the `kde-wireguard-applet-*.tar.gz` installer bundle from the
+[latest GitHub release](https://github.com/minkytown/KDE-Wireguard-applet/releases/latest)
+and extract it. The release page has step-by-step instructions and a SHA-256
+checksum.
+
 Use a recent Bazzite KDE image with Plasma 6, Plasma5Support, KWallet, KDialog,
 Flatpak, WireGuard tools, nftables, and an active systemd-resolved service.
 The system Python needs the `dbus` and `gi` modules with the GioUnix typelib.
@@ -13,8 +18,8 @@ The installer checks the command-line and Python dependencies before installing.
 The integration was developed on Bazzite with [Vopono 1.0.2](https://github.com/jamesmcm/vopono/releases/tag/1.0.2).
 
 Download a standalone Vopono CLI binary for your architecture from that release,
-make it executable, and run the installer from this checkout as the account that
-runs Plasma.
+make it executable, and open Konsole in the extracted applet folder. Run the
+installer as the account that runs Plasma.
 
 ```sh
 chmod +x /path/to/vopono
@@ -30,7 +35,7 @@ with the switch on.
 Enter Plasma edit mode and choose **Add Widgets**. Add **KDE Wireguard applet** to
 each panel where you want it. Open the applet, choose **PIA Credentials…**,
 then select a location. To update an existing installation, close routed apps,
-disconnect, and rerun the same installer from the updated checkout.
+disconnect, and run the installer from the new release bundle.
 
 ## Connect and switch locations
 

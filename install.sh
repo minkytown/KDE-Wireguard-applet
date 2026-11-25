@@ -51,4 +51,4 @@ else
     kpackagetool6 --type Plasma/Applet --install "$bundle/plasmoid"
 fi
 sudo -- /usr/bin/bash "$bundle/guard/install" "$bundle" "$vopono" "$UID"
-echo "Add the PIA WireGuard widget using Plasma’s Add Widgets menu."
+echo "Add the KDE Wireguard applet using Plasma’s Add Widgets menu."
