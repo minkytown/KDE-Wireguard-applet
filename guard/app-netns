@@ -1,0 +1,121 @@
+#!/usr/bin/python3 -I
+"""Add a fail-closed policy inside a Vopono namespace, then drop privileges."""
+import base64
+from contextlib import ExitStack
+import ctypes
+import ipaddress
+import json
+import os
+import pwd
+import re
+import stat
+import subprocess
+import sys
+
+
+def capture(*command):
+    return subprocess.check_output(command, text=True).strip()
+
+
+def mount_call(result):
+    if result == -1:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error))
+    return result
+
+
+def bind_flatpak_monitor(uid, runtime, source):
+    if os.path.samestat(os.stat("/proc/self/ns/mnt"), os.stat("/proc/1/ns/mnt")):
+        raise ValueError("Refusing to change the host mount namespace.")
+    if not re.fullmatch(r"/run/pia-vopono/app-[A-Za-z0-9_]+/monitor", source):
+        raise ValueError("Invalid private Flatpak DNS path.")
+    # Pin each directory across the privileged bind. The user owns these
+    # directories and may rename them while the request is running.
+    flags = os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW
+    with ExitStack() as stack:
+        parent = None
+        for component in (runtime, ".flatpak-helper", "monitor"):
+            parent = os.open(component, flags, dir_fd=parent)
+            stack.callback(os.close, parent)
+            if os.fstat(parent).st_uid != uid:
+                raise ValueError("Unexpected owner on the Flatpak DNS monitor.")
+        info = os.stat(source, follow_symlinks=False)
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0
+                or info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)):
+            raise ValueError("The private Flatpak DNS monitor is not a protected directory.")
+        subprocess.run(["/usr/bin/mount", "--make-rprivate", "/"], check=True)
+        # linux/mount.h: AT_FDCWD, OPEN_TREE_CLONE and the two empty-path flags.
+        libc = ctypes.CDLL(None, use_errno=True)
+        tree = mount_call(libc.open_tree(-100, os.fsencode(source), 1 | os.O_CLOEXEC))
+        stack.callback(os.close, tree)
+        mount_call(libc.move_mount(tree, b"", parent, b"", 0x04 | 0x40))
+
+
+def main():
+    uid = int(sys.argv[1])
+    ns = os.environ.get("VOPONO_NS", "")
+    if os.geteuid() or uid <= 0 or not re.fullmatch(r"piaa[0-9a-f]{6}", ns):
+        raise ValueError("Invalid protected namespace or desktop user.")
+    current = os.stat("/proc/self/ns/net")
+    if os.path.samestat(current, os.stat("/proc/1/ns/net")) or not os.path.samestat(
+            current, os.stat(f"/run/netns/{ns}")):
+        raise ValueError("Refusing to change the host or an unexpected network namespace.")
+    plan = json.loads(base64.urlsafe_b64decode(sys.argv[2]))
+    links = json.loads(capture("/usr/sbin/ip", "-j", "-d", "link"))
+    direct = plan.get("direct") is True
+    kind = "veth" if direct else "wireguard"
+    interfaces = [link["ifname"] for link in links
+                  if link.get("linkinfo", {}).get("info_kind") == kind]
+    if len(interfaces) != 1 or not re.fullmatch(r"[a-zA-Z0-9_-]{1,15}", interfaces[0]):
+        raise ValueError(f"Expected one {kind} interface.")
+    iface = interfaces[0]
+    transport = ""
+    if not direct:
+        endpoints = capture("/usr/bin/wg", "show", iface, "endpoints").splitlines()
+        if len(endpoints) != 1:
+            raise ValueError("Expected one WireGuard peer.")
+        ip, port = endpoints[0].split()[1].rsplit(":", 1)
+        ip = ipaddress.IPv4Address(ip)
+        port = int(port)
+        mark = int(capture("/usr/bin/wg", "show", iface, "fwmark"), 0)
+        if not 1 <= port <= 65535 or not 1 <= mark <= 0xffffffff:
+            raise ValueError("Invalid WireGuard endpoint or mark.")
+        transport = f"meta mark {mark} ip daddr {ip} udp dport {port} accept"
+    policy = f"""
+destroy table inet pia_app
+table inet pia_app {{
+    chain output {{
+        type filter hook output priority -15; policy drop;
+        oifname "lo" accept
+        meta nfproto ipv4 oifname "{iface}" accept
+        {transport}
+        counter drop
+    }}
+}}
+"""
+    subprocess.run(["/usr/bin/nft", "-f", "-"], input=policy, text=True, check=True)
+    user = pwd.getpwuid(uid)
+    runtime = f"/run/user/{uid}"
+    if plan.get("monitor"):
+        bind_flatpak_monitor(uid, runtime, plan["monitor"])
+    session = plan.get("session", {})
+    env = {key: session[key] for key in (
+        "DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY", "LANG", "LC_ALL", "XDG_CURRENT_DESKTOP",
+        "XDG_SESSION_TYPE", "QT_QPA_PLATFORM", "PIPEWIRE_REMOTE", "PULSE_SERVER")
+        if key in session}
+    env.update(HOME=user.pw_dir, USER=user.pw_name, LOGNAME=user.pw_name,
+               PATH="/usr/local/bin:/usr/bin:/bin", XDG_RUNTIME_DIR=runtime,
+               DBUS_SESSION_BUS_ADDRESS=f"unix:path={runtime}/bus")
+    app = f"{user.pw_dir}/.local/share/pia-vopono/pia-vopono"
+    program = "/usr/bin/setpriv"
+    os.execve(program, [program, "--reuid", str(uid), "--regid", str(user.pw_gid),
+                        "--init-groups", "--no-new-privs", "--", app, "app-inside",
+                        sys.argv[2], iface], env)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, ValueError, KeyError, IndexError, subprocess.SubprocessError) as error:
+        print(f"Protected app did not start: {error}", file=sys.stderr)
+        sys.exit(1)

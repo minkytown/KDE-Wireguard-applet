@@ -1,0 +1,13 @@
+{
+    "KPlugin": {
+        "Id": "local.pia.wireguard.routing",
+        "Name": "KDE Wireguard applet",
+        "Description": "Connect this desktop to Private Internet Access",
+        "Icon": "network-vpn",
+        "Version": "1.8",
+        "License": "MIT",
+        "Category": "System Information"
+    },
+    "KPackageStructure": "Plasma/Applet",
+    "X-Plasma-API-Minimum-Version": "6.0"
+}

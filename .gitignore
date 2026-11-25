@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.env
+.env.*
+*.key
+*.pem
+*.log
+apps.json
+locations.json
+piadesk.conf
+vopono.toml
+*.rpm
+*.deb
+/vopono

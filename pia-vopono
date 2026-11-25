@@ -1,0 +1,556 @@
+#!/usr/bin/python3
+"""PIA WireGuard desktop client and provider API helpers."""
+import fcntl
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+
+SYSTEM_IFACE = "piadesk"
+GUARD_DIR = Path("/etc/pia-wireguard")
+
+
+class SetupError(Exception):
+    pass
+
+
+def interface_exists():
+    return Path(f"/sys/class/net/{SYSTEM_IFACE}").exists()
+
+
+def desktop_state():
+    return Path(f"/run/user/{os.getuid()}/pia-desktop.json")
+
+
+def desktop_lock():
+    return desktop_state().with_suffix(".lock").open("a")
+
+
+def system_status():
+    with desktop_lock() as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:
+            if not interface_exists():
+                return "Connecting"
+        active = interface_exists()
+        try:
+            status = json.loads(desktop_state().read_text())
+        except FileNotFoundError:
+            status = {}
+        if Path("/run/pia-vopono/reconnecting").exists() or (
+                not active and status.get("status") == "Connected"):
+            region = status.get("region")
+            return f"Reconnecting · {region}" if region else "Reconnecting"
+        if not active:
+            return "Disconnected"
+        if not status:
+            return "WireGuard interface active"
+        return f'{status["status"]} · {status["region"]}'
+
+
+def managed_guard():
+    return (GUARD_DIR / "guard.py").is_file() and subprocess.run(
+        ["/usr/bin/systemctl", "is-active", "--quiet", "pia-guard.service"],
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        timeout=2,
+    ).returncode == 0
+
+
+def kill_switch_status():
+    try:
+        if managed_guard():
+            return "Off" if (GUARD_DIR / "kill-switch.off").exists() else "On"
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return "Unavailable"
+
+
+def kill_switch_on():
+    return kill_switch_status() != "Off"
+
+
+def panel_status():
+    try:
+        connection = system_status()
+    except (OSError, ValueError, KeyError):
+        connection = "Status unavailable"
+    return {"connection": connection, "killSwitch": kill_switch_status()}
+
+
+def locations_cache():
+    return Path.home() / ".local/share/pia-vopono/locations.json"
+
+
+def locations_json():
+    path = locations_cache()
+    items = json.loads(path.read_text()) if path.exists() else []
+    if not items:
+        raise SetupError("The PIA location catalog is unavailable.")
+    return items
+
+
+# Plasma polls this command continuously. Avoid loading the wallet, TLS and
+# argument parser on the read-only status path.
+if __name__ == "__main__":
+    if sys.argv[1:] == ["panel-status"]:
+        print(json.dumps(panel_status(), ensure_ascii=False))
+        raise SystemExit(0)
+    if sys.argv[1:] == ["locations-json"] and locations_cache().is_file():
+        try:
+            print(json.dumps(locations_json(), ensure_ascii=False))
+        except (SetupError, OSError, ValueError) as error:
+            print(f"Could not load the PIA location catalog. {error}", file=sys.stderr)
+            raise SystemExit(1) from None
+        raise SystemExit(0)
+
+
+import argparse
+import base64
+import getpass
+import http.client
+import ipaddress
+import re
+import secrets
+import socket
+import ssl
+import tempfile
+import time
+
+import dbus
+
+APP = "org.qbittorrent.qBittorrent"
+LABEL = "PIA WireGuard Apps"
+FOLDER = "PIA WireGuard Apps"
+ENTRY = "PIA VPN login"
+TOKEN_HOST = "www.privateinternetaccess.com"
+LIST_HOST = "serverlist.piaservers.net"
+CA = Path(__file__).resolve().with_name("pia-ca.crt")
+
+
+class PinnedHTTPS(http.client.HTTPSConnection):
+    def __init__(self, name, ip):
+        context = ssl.create_default_context(cafile=CA)
+        # PIA's published CA lacks the keyUsage extension required by strict
+        # RFC 5280 processing. Keep the PIA-only trust root and hostname check.
+        context.verify_flags &= ~ssl.VERIFY_X509_STRICT
+        super().__init__(name, 1337, timeout=8, context=context)
+        self.ip = ip
+
+    def connect(self):
+        sock = socket.create_connection((self.ip, self.port), self.timeout)
+        try:
+            self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+        except BaseException:
+            sock.close()
+            raise
+
+
+def request(connection, method, path, body=None, headers=None, first_line=False):
+    try:
+        connection.request(method, path, body=body, headers=headers or {})
+        response = connection.getresponse()
+        if response.status != 200:
+            raise SetupError(f"PIA returned HTTP {response.status}.")
+        data = response.readline(4_000_001) if first_line else response.read(4_000_001)
+        if len(data) > 4_000_000:
+            raise SetupError("The PIA response was larger than expected.")
+        return json.loads(data)
+    finally:
+        connection.close()
+
+
+def wallet_access():
+    bus = dbus.SessionBus()
+    service = bus.get_object("org.kde.kwalletd6", "/modules/kwalletd6")
+    wallet = dbus.Interface(service, "org.kde.KWallet")
+    handle = wallet.open(wallet.networkWallet(), dbus.Int64(0), LABEL, timeout=180)
+    if handle < 0:
+        raise SetupError("Unlock KDE Wallet and allow access for PIA WireGuard Apps.")
+    return wallet, handle
+
+
+def save_login():
+    if sys.stdin.isatty():
+        user = getpass.getpass("PIA VPN username (p-number): ").strip()
+        password = getpass.getpass("PIA VPN password: ")
+    else:
+        user = dialog("--inputbox", "PIA VPN username (p-number)")
+        if user is None:
+            return
+        secret = subprocess.run(["/usr/bin/kdialog", "--title", LABEL, "--password",
+                                 "PIA VPN password"], stdout=subprocess.PIPE, text=True)
+        if secret.returncode:
+            return
+        password = secret.stdout.removesuffix("\n")
+    if (not re.fullmatch(r"p[0-9]{1,20}", user) or not 1 <= len(password) <= 512
+            or any(ch in password for ch in "\r\n\0")):
+        raise SetupError("Enter your PIA VPN username (p-number) and password.")
+    try:
+        service_request("validate-login", user=user, password=password)
+    except SetupError as error:
+        # The desktop can be updated before the privileged service.
+        if str(error) != "Unsupported PIA request.":
+            raise
+        token_for(user, password)
+    wallet, handle = wallet_access()
+    if not wallet.hasFolder(handle, FOLDER, LABEL):
+        if not wallet.createFolder(handle, FOLDER, LABEL):
+            raise SetupError("Could not create the KDE Wallet folder.")
+    if wallet.writePassword(handle, FOLDER, ENTRY, json.dumps([user, password]), LABEL) != 0:
+        raise SetupError("Could not save the login in KDE Wallet.")
+    print("PIA accepted the login. Saved in KDE Wallet.")
+    dialog("--msgbox", "PIA accepted the login. Saved in KDE Wallet.")
+
+
+def read_login():
+    wallet, handle = wallet_access()
+    if not wallet.hasEntry(handle, FOLDER, ENTRY, LABEL):
+        raise SetupError("Open “PIA VPN Credentials” from the Plasma application menu first.")
+    user, password = json.loads(wallet.readPassword(handle, FOLDER, ENTRY, LABEL))
+    return user, password
+
+
+def token_for(user, password, connection=None):
+    boundary = secrets.token_hex(32)
+    parts = [
+        f'--{boundary}\r\nContent-Disposition: form-data; name="{key}"\r\n\r\n{value}\r\n'
+        for key, value in (("username", user), ("password", password))
+    ]
+    data = ("".join(parts) + f"--{boundary}--\r\n").encode()
+    result = request(connection or http.client.HTTPSConnection(TOKEN_HOST, timeout=12), "POST",
+                     "/api/client/v2/token", data,
+                     {"Content-Type": f"multipart/form-data; boundary={boundary}"})
+    if not isinstance(result.get("token"), str) or not result["token"]:
+        raise SetupError("PIA did not issue a token. Check the VPN username and password.")
+    return result["token"]
+
+
+def regions_from(payload):
+    return sorted(
+        (region for region in payload["regions"]
+         if not region.get("offline") and region["servers"].get("wg")),
+        key=lambda region: (region["country"], region["name"]),
+    )
+
+
+def live_regions():
+    return regions_from(request(http.client.HTTPSConnection(LIST_HOST, timeout=12), "GET",
+                                "/vpninfo/servers/v6", first_line=True))
+
+
+def dialog(*args):
+    result = subprocess.run(["/usr/bin/kdialog", "--title", LABEL, *args],
+                            stdout=subprocess.PIPE, text=True)
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def key(value):
+    if not isinstance(value, str) or len(base64.b64decode(value, validate=True)) != 32:
+        raise ValueError("Invalid WireGuard key.")
+    return value
+
+
+def wireguard_keys():
+    private = key(subprocess.check_output(["/usr/bin/wg", "genkey"], text=True).strip())
+    public = key(subprocess.check_output(["/usr/bin/wg", "pubkey"], input=private + "\n",
+                                         text=True).strip())
+    return private, public
+
+
+def wireguard_config(region, token, connection_factory=PinnedHTTPS, keys=None):
+    from urllib.parse import urlencode
+
+    private, public = keys if keys is not None else wireguard_keys()
+    for candidate in region["servers"]["wg"][:5]:
+        try:
+            name = candidate["cn"]
+            if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9.-]{0,252}", name):
+                continue
+            ip = str(ipaddress.IPv4Address(candidate["ip"]))
+            query = urlencode({"pt": token, "pubkey": public})
+            reply = request(connection_factory(name, ip), "GET", "/addKey?" + query)
+            if reply.get("status") != "OK" or reply["peer_pubkey"] != public:
+                continue
+            endpoint = ipaddress.IPv4Address(reply["server_ip"])
+            peer = ipaddress.IPv4Interface(reply["peer_ip"])
+            dns = [str(ipaddress.IPv4Address(value)) for value in reply["dns_servers"]]
+            port = int(reply["server_port"])
+            if not dns or not 1 <= port <= 65535:
+                continue
+            return (
+                f"[Interface]\nPrivateKey = {private}\nAddress = {peer}\n"
+                f"DNS = {', '.join(dns)}\nMTU = 1420\n\n[Peer]\n"
+                f"PublicKey = {key(reply['server_key'])}\n"
+                f"AllowedIPs = 0.0.0.0/0\nEndpoint = {endpoint}:{port}\n"
+                "PersistentKeepalive = 25\n"
+            ), dns
+        except (OSError, ValueError, KeyError, http.client.HTTPException, SetupError):
+            continue
+    raise SetupError("PIA did not register a WireGuard key on the selected location’s servers.")
+
+def record_state(status, region):
+    path = desktop_state()
+    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as stream:
+        temporary = Path(stream.name)
+        try:
+            json.dump({"status": status, "region": region}, stream)
+            stream.flush()
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+
+def system_profile(config, dns):
+    # Use the host's systemd-resolved integration. PIA's manual peer supplies
+    # IPv4 service, so route ordinary IPv6 through the same peer as well.
+    hooks = (
+        f"PostUp = /usr/bin/resolvectl dns %i {' '.join(dns)}\n"
+        "PostUp = /usr/bin/resolvectl domain %i '~.'\n"
+    )
+    config = re.sub(r"(?m)^DNS = .*\n", "", config)
+    config = config.replace("\n[Peer]", "\n" + hooks + "\n[Peer]")
+    config = config.replace("AllowedIPs = 0.0.0.0/0", "AllowedIPs = 0.0.0.0/0, ::/0")
+    return config.replace("[Interface]\n", "[Interface]\nFwMark = 51820\n")
+
+
+def service_request(action, **parameters):
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+            connection.settimeout(150)
+            connection.connect("/run/pia-vopono/control.sock")
+            request = {"action": action, **parameters}
+            connection.sendall(json.dumps(request).encode() + b"\n")
+            connection.shutdown(socket.SHUT_WR)
+            with connection.makefile("rb") as stream:
+                line = stream.readline(512_001)
+    except (OSError, TimeoutError) as error:
+        raise SetupError("Could not reach the PIA systemd service. Check pia-control.socket.") from error
+    if not line.endswith(b"\n") or len(line) > 512_000:
+        raise SetupError("The PIA systemd service did not return a response.")
+    result = json.loads(line)
+    if not result.get("ok"):
+        raise SetupError(result.get("error") or "The PIA systemd request failed.")
+    return result
+
+
+def catalog_from(regions):
+    source = Path("/usr/share/iso-codes/json/iso_3166-1.json")
+    countries = {}
+    if source.exists():
+        for item in json.loads(source.read_text())["3166-1"]:
+            countries[item["alpha_2"]] = item.get("common_name", item["name"])
+    locations = []
+    for region in regions:
+        code = region["country"].upper()
+        locations.append({"id": region["id"], "name": region["name"],
+                          "country": countries.get(code, code), "code": code})
+    return [{"id": "optimal", "name": "Optimal", "country": "Lowest latency"}] + sorted(
+        locations, key=lambda item: (item["country"], item["name"])
+    )
+
+
+def save_locations(items):
+    path = locations_cache()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as stream:
+        temporary = Path(stream.name)
+        try:
+            json.dump(items, stream, ensure_ascii=False)
+            stream.flush()
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+
+def refresh_locations():
+    items = service_request("locations")["locations"]
+    if not items:
+        raise SetupError("PIA returned an empty location catalog.")
+    save_locations(items)
+    return items
+
+
+def system_connect(region_id):
+    if not managed_guard():
+        raise SetupError("Complete the system-wide PIA kill switch installation first.")
+    if not region_id:
+        items = locations_json() if locations_cache().is_file() else refresh_locations()
+        values = [value for item in items for value in
+                  (item["id"], f'{item["name"]}  ·  {item["country"]}')]
+        region_id = dialog("--menu", "Select a PIA WireGuard location", *values)
+        if not region_id:
+            return
+    user, password = read_login()
+    locations = locations_json() if locations_cache().is_file() else []
+    label = next((item["name"] for item in locations if item["id"] == region_id), region_id)
+    old_state = desktop_state().read_text() if desktop_state().exists() else None
+    record_state("Connecting", label)
+    try:
+        response = service_request("switch", region=region_id, user=user, password=password)
+    except SetupError:
+        if old_state and interface_exists():
+            previous = json.loads(old_state)
+            record_state(previous["status"], previous["region"])
+        else:
+            desktop_state().unlink(missing_ok=True)
+        raise
+    label = response["region"]
+    if response.get("locations"):
+        save_locations(response["locations"])
+    record_state("Checking connection", label)
+    try:
+        verify_system()
+    except SetupError:
+        record_state("Verification failed", label)
+        raise
+    record_state("Connected", label)
+
+
+
+def verify_system():
+    for attempt in range(3):
+        route = subprocess.run(["/usr/sbin/ip", "-j", "-4", "route", "get", "1.1.1.1"],
+                               capture_output=True, text=True)
+        if route.returncode or json.loads(route.stdout)[0].get("dev") != SYSTEM_IFACE:
+            raise SetupError("The host IPv4 route is not using the PIA interface.")
+        dns = subprocess.run(["/usr/bin/resolvectl", "domain", SYSTEM_IFACE],
+                             capture_output=True, text=True)
+        if dns.returncode or "~." not in dns.stdout.split():
+            raise SetupError("System DNS is not using the PIA interface.")
+        probe = subprocess.run(["/usr/bin/curl", "--noproxy", "*", "--interface",
+                                f"if!{SYSTEM_IFACE}", "--ipv4", "--silent", "--fail",
+                                "--output", "/dev/null", "--max-time", "8",
+                                "https://www.cloudflare.com/cdn-cgi/trace"])
+        if probe.returncode == 0:
+            print("Verified system IPv4 route, PIA DNS routing, and HTTPS through WireGuard.")
+            return
+        if attempt < 2:
+            time.sleep(1)
+    raise SetupError("The interface is up, but the HTTPS test through PIA failed. Use Disconnect before retrying.")
+
+
+def system_disconnect():
+    service_request("disconnect-open")
+    desktop_state().unlink(missing_ok=True)
+
+def system_action(action, *args):
+    with desktop_lock() as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise SetupError("Another system-wide PIA operation is running.") from None
+        action(*args)
+
+
+def clear_old_qbittorrent_binding():
+    path = Path.home() / f".var/app/{APP}/config/qBittorrent/qBittorrent.conf"
+    if not path.is_file():
+        return
+    original = path.read_text()
+    updated = re.sub(
+        r"(?m)^Session\\Interface(?:Name)?=pia[aq][0-9a-f]{6}(?:\n|$)", "", original
+    )
+    if updated == original:
+        return
+    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as stream:
+        temporary = Path(stream.name)
+        try:
+            stream.write(updated)
+            stream.flush()
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("credentials")
+    system_parser = sub.add_parser("system-connect")
+    system_parser.add_argument("--region")
+    sub.add_parser("system-disconnect")
+    sub.add_parser("system-status")
+    sub.add_parser("panel-status")
+    sub.add_parser("locations-json")
+    sub.add_parser("locations-refresh")
+    sub.add_parser("kill-switch-status")
+    kill_switch = sub.add_parser("kill-switch-set")
+    kill_switch.add_argument("setting", choices=("on", "off"))
+    sub.add_parser("apps")
+    sub.add_parser("app-list-json")
+    app_set = sub.add_parser("app-set-json")
+    app_set.add_argument("app_id")
+    app_set.add_argument("setting", choices=("on", "off"))
+    app_set.add_argument("--mode", choices=("vpn", "direct"), default="vpn")
+    app_launch = sub.add_parser("app-launch")
+    app_launch.add_argument("app_id")
+    app_launch.add_argument("app_args", nargs=argparse.REMAINDER)
+    sub.add_parser("app-probe")
+    app_inside = sub.add_parser("app-inside")
+    app_inside.add_argument("plan")
+    app_inside.add_argument("interface")
+    launch_parser = sub.add_parser("launch")
+    launch_parser.add_argument("--region")
+    args = parser.parse_args()
+    try:
+        if args.command == "credentials":
+            save_login()
+        elif args.command == "system-connect":
+            system_action(system_connect, args.region)
+        elif args.command == "system-disconnect":
+            system_action(system_disconnect)
+        elif args.command == "system-status":
+            print(system_status())
+        elif args.command == "panel-status":
+            print(json.dumps(panel_status(), ensure_ascii=False))
+        elif args.command in ("locations-json", "locations-refresh"):
+            items = (locations_json() if args.command == "locations-json" and locations_cache().is_file()
+                     else refresh_locations())
+            print(json.dumps(items, ensure_ascii=False))
+        elif args.command == "kill-switch-status":
+            print(kill_switch_status())
+        elif args.command == "kill-switch-set":
+            service_request("kill-" + args.setting)
+        elif args.command in ("app-list-json", "app-set-json"):
+            import pia_apps
+            print(json.dumps(pia_apps.panel_response(getattr(args, "app_id", None),
+                                                     getattr(args, "setting", "") == "on",
+                                                     getattr(args, "mode", "vpn")),
+                             ensure_ascii=False))
+        elif args.command in ("apps", "app-launch", "app-probe", "app-inside", "launch"):
+            import pia_apps
+            try:
+                if args.command == "apps":
+                    pia_apps.manage(globals())
+                elif args.command == "app-inside":
+                    pia_apps.inside(globals(), args.plan, args.interface)
+                elif args.command == "launch":
+                    pia_apps.launch(globals(), APP, region_id=args.region)
+                else:
+                    app_args = getattr(args, "app_args", [])
+                    if app_args[:1] == ["--"]:
+                        app_args = app_args[1:]
+                    pia_apps.launch(globals(), getattr(args, "app_id", None),
+                                    probe=args.command == "app-probe", app_args=app_args)
+            except pia_apps.AppError as error:
+                raise SetupError(str(error)) from None
+    except SetupError as error:
+        print(error, file=sys.stderr)
+        if args.command not in ("app-inside", "system-status", "locations-json", "locations-refresh", "kill-switch-status"):
+            dialog("--error", str(error))
+        return 1
+    except (OSError, ValueError, KeyError, http.client.HTTPException, dbus.DBusException,
+            subprocess.SubprocessError):
+        message = "PIA setup failed. Check connectivity, KDE Wallet, and the Vopono installation."
+        print(message, file=sys.stderr)
+        if args.command not in ("app-inside", "system-status", "locations-json", "locations-refresh", "kill-switch-status"):
+            dialog("--error", message)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,12 @@
+[Unit]
+Description=Recover the active PIA WireGuard tunnel
+Requires=pia-guard.service
+After=pia-guard.service
+ConditionPathExists=/run/pia-desktop/piadesk.conf
+ConditionPathExists=!/run/pia-desktop/disconnect-requested
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /etc/pia-wireguard/guard.py reconnect
+TimeoutStartSec=25s
+UMask=0077
