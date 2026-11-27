@@ -7,6 +7,9 @@ ColumnLayout {
     id: page
 
     required property var apps
+    required property var regions
+    required property var locations
+    signal regionRequested(string appId, string region)
     required property var vpnRequired
     required property bool excludedMode
     required property bool pending
@@ -87,13 +90,15 @@ ColumnLayout {
             readonly property bool isProtected: !!page.vpnRequired[modelData.id]
 
             width: rows.width
-            height: Math.max(Kirigami.Units.gridUnit * 2, body.implicitHeight)
+            height: body.implicitHeight + Kirigami.Units.smallSpacing
 
-            RowLayout {
+            ColumnLayout {
                 id: body
                 anchors.fill: parent
                 anchors.rightMargin: Kirigami.Units.largeSpacing
 
+                RowLayout {
+                Layout.fillWidth: true
                 PlasmaComponents.Switch {
                     checked: row.isProtected
                     enabled: !page.pending
@@ -114,6 +119,17 @@ ColumnLayout {
                     Layout.fillWidth: true
                 }
 
+                }
+                PlasmaComponents.ComboBox {
+                    Layout.fillWidth: true
+                    visible: row.isProtected && !page.excludedMode
+                    enabled: !page.pending
+                    model: page.locations
+                    textRole: "name"
+                    currentIndex: Math.max(0, page.locations.findIndex(location => location.id === (page.regions[row.modelData.id] || "host")))
+                    Accessible.name: "VPN location for " + row.modelData.name
+                    onActivated: index => page.regionRequested(row.modelData.id, page.locations[index].id)
+                }
             }
         }
 
@@ -122,15 +138,15 @@ ColumnLayout {
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
             visible: rows.count === 0
-            text: page.pending ? "Loading apps…" : search.text.length ? "No matching apps" : "No Flatpak apps found"
+            text: page.pending ? "Loading apps…" : search.text.length ? "No matching apps" : "No apps found"
         }
     }
 
     PlasmaComponents.Label {
         Layout.fillWidth: true
         text: page.errorMessage || (page.excludedMode
-            ? "Excluded Flatpaks use the direct connection even when the system kill switch is on."
-            : "Flatpak apps. The system kill switch still applies.")
+            ? "Excluded apps use the direct connection even when the system kill switch is on."
+            : "Native and Flatpak apps. Quit an app before changing its route.")
         wrapMode: Text.Wrap
     }
 }

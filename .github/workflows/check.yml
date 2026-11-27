@@ -1,10 +1,7 @@
 name: Check
-
 on: [push, pull_request]
-
 permissions:
   contents: read
-
 jobs:
   checks:
     runs-on: ubuntu-latest
@@ -12,5 +9,5 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-      - run: python3 -m unittest discover -s tests -v
-      - run: bash -n install.sh && bash -n guard/install
+      - run: sudo apt-get update && sudo apt-get install -y jq socat ripgrep gawk xdg-dbus-proxy dbus dnsmasq iproute2 nftables wireguard-tools
+      - run: bash tests/run.sh

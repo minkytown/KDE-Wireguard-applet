@@ -1,0 +1,8 @@
+[Unit]
+Description=Open routed app link or directory
+[Service]
+ExecStart=/usr/local/lib/kde-wireguard-applet/bin/open-link serve /usr/bin/gio
+StandardInput=socket
+StandardOutput=inherit
+ExitType=cgroup
+Environment="PATH=%h/.local/state/walker-vpn/apps/bin:/usr/local/bin:/usr/bin:/bin"

@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+set -euo pipefail
+(( EUID == 0 && $# == 2 )) || exit 2
+bundle=$(realpath -e -- "$1")
+account=$2
+[[ $account =~ ^[a-z_][a-z0-9_-]*$ ]] && id "$account" >/dev/null || exit 2
+[[ -r /etc/ssl/certs/ca-bundle.crt ]] || { echo "System TLS CA bundle is missing." >&2; exit 1; }
+# Never overlay the old firewall while its tunnel or namespaces are active.
+if systemctl is-active --quiet pia-control.socket; then
+    home_dir=$(getent passwd "$account" | cut -d: -f6)
+    runuser -u "$account" -- "$home_dir/.local/share/pia-vopono/pia-vopono" system-disconnect
+    if ip netns list | grep -Eq 'vopono|pia'; then
+        echo 'Close routed applications and wait for their old namespaces to exit.' >&2
+        exit 1
+    fi
+    systemctl disable --now pia-reconnect.timer pia-control.socket
+    # Remove the dependency before stopping the old guard, so NetworkManager
+    # and the desktop's existing connections stay up during the upgrade.
+    rm -f /etc/systemd/system/NetworkManager.service.d/50-pia-guard.conf
+    systemctl daemon-reload
+    systemctl stop pia-guard.service
+    systemctl disable pia-guard.service
+    nft list table inet pia_guard >/dev/null 2>&1 && nft delete table inet pia_guard
+    ip -4 rule del pref 101 fwmark 0x504941 lookup main 2>/dev/null || :
+    rm -f /etc/systemd/system/NetworkManager.service.d/50-pia-guard.conf
+fi
+if ! id walker-vpn-api >/dev/null 2>&1; then
+    useradd --system --no-create-home --shell /usr/sbin/nologin walker-vpn-api
+fi
+install -d -m 0755 /usr/local/lib/kde-wireguard-applet/lib /usr/local/lib/kde-wireguard-applet/bin
+install -m 0644 "$bundle/lib/"* /usr/local/lib/kde-wireguard-applet/lib/
+install -m 0755 "$bundle/bin/"* /usr/local/lib/kde-wireguard-applet/bin/
+ln -sfn /usr/local/lib/kde-wireguard-applet/bin/walker-vpn /usr/local/bin/walker-vpn
+install -d -m 0755 /usr/local/lib/kde-wireguard-applet/opener
+cat > /usr/local/lib/kde-wireguard-applet/opener/xdg-open <<'OPENER'
+#!/usr/bin/env bash
+exec /usr/local/lib/kde-wireguard-applet/bin/open-link client /usr/bin/xdg-open /usr/bin/socat "$@"
+OPENER
+chmod 755 /usr/local/lib/kde-wireguard-applet/opener/xdg-open
+cat > /etc/tmpfiles.d/walker-vpn.conf <<'TMP'
+d /run/walker-vpn 0700 root root - -
+d /run/walker-vpn-view 0755 root root - -
+d /var/lib/walker-vpn 0700 root root - -
+TMP
+systemd-tmpfiles --create /etc/tmpfiles.d/walker-vpn.conf
+for unit in "$bundle/system/"*.service "$bundle/system/"*.socket "$bundle/system/"*.timer; do
+    sed "s/@ACCOUNT@/$account/g" "$unit" > "/etc/systemd/system/${unit##*/}"
+done
+# Preserve the old explicit boot opt-in, but never revive its saved tunnel.
+if [[ -f /etc/pia-wireguard/reconnect-on-boot ]]; then
+    touch /var/lib/walker-vpn/reconnect-on-boot
+fi
+rm -f /etc/pia-wireguard/guard.py /etc/pia-wireguard/control.py /etc/pia-wireguard/pia-vopono
+if [[ -d /etc/pia-wireguard/__pycache__ ]]; then rm -rf /etc/pia-wireguard/__pycache__; fi
+rm -f /etc/systemd/system/pia-{control.socket,control@.service,guard.service,reconnect.service,reconnect.timer}
+rm -f /etc/systemd/system/pia-control.socket.d/50-desktop-account.conf
+systemctl daemon-reload
+systemctl enable --now walker-vpn.socket walker-vpn-maintain.timer

@@ -14,3 +14,7 @@ vopono.toml
 *.rpm
 *.deb
 /vopono
+
+*.cred
+walkvpn0.conf
+wvapp.conf

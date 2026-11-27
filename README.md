@@ -1,151 +1,123 @@
-# KDE Wireguard applet
+# KDE WireGuard applet
 
-An independent KDE Plasma 6 applet for Private Internet Access on Bazzite.
-It manages a system-wide WireGuard tunnel, a persistent nftables kill switch,
-automatic reconnection, and per-app routing for Flatpaks.
+A Plasma 6 panel applet for Private Internet Access on Bazzite. Version 2 uses
+Kommynct's Bash WireGuard backend at
+[5a5ce04](https://github.com/Kommynct/walker-vpn/commit/5a5ce04bdfadbec3327f5af44c724a4d77ba395b),
+with the existing searchable Plasma interface. There is no Python, Walker,
+Elephant, Waybar, NixOS module or Vopono dependency.
 
-## Install
+## Install or upgrade
 
-Download the `kde-wireguard-applet-*.tar.gz` installer bundle from the
-[latest GitHub release](https://github.com/minkytown/KDE-Wireguard-applet/releases/latest)
-and extract it. The release page has step-by-step instructions and a SHA-256
-checksum.
-
-Use a recent Bazzite KDE image with Plasma 6, Plasma5Support, KWallet, KDialog,
-Flatpak, WireGuard tools, nftables, and an active systemd-resolved service.
-The system Python needs the `dbus` and `gi` modules with the GioUnix typelib.
-The installer checks the command-line and Python dependencies before installing.
-The integration was developed on Bazzite with [Vopono 1.0.2](https://github.com/jamesmcm/vopono/releases/tag/1.0.2).
-
-Download a standalone Vopono CLI binary for your architecture from that release,
-make it executable, and open Konsole in the extracted applet folder. Run the
-installer as the account that runs Plasma.
+Download and extract the release bundle, then run as your Plasma desktop user:
 
 ```sh
-chmod +x /path/to/vopono
-./install.sh /path/to/vopono
+./install.sh
 ```
 
-The installer uses administrator authorization to install the system services
-and permits one desktop account to use the control socket. A fresh install
-enables the system kill switch. Ordinary internet access pauses until you
-connect or turn the switch off. Both location discovery and PIA login work
-with the switch on.
+Requires Plasma 6 with Plasma5Support, KDialog, Flatpak, WireGuard tools,
+nftables, systemd-resolved, jq, socat, GNU grep, GNU awk, xdg-dbus-proxy,
+dbus-daemon, curl, util-linux, GLib tools and sudo. The installer checks these
+before making changes. Close routed Flatpak apps before upgrading. Administrator
+authorization is needed to install the system services.
 
-Enter Plasma edit mode and choose **Add Widgets**. Add **KDE Wireguard applet** to
-each panel where you want it. Open the applet, choose **PIA Credentials…**,
-then select a location. To update an existing installation, close routed apps,
-disconnect, and run the installer from the new release bundle.
+Existing widgets retain their package ID and panel position. On a fresh install,
+add **KDE Wireguard applet** through Plasma's Add Widgets menu. Use **PIA →
+PIA Credentials…** to save a login if one was not imported. The backend encrypts
+credentials with systemd's host key in root-only `/var/lib/walker-vpn` storage.
+An existing PIA KWallet login is imported when available. Credentials never appear in command
+arguments. Sign out and in after installation to apply the native command path
+to the desktop session.
 
-## Connect and switch locations
+Upgrading restores the previous client's managed launchers and Flatpak network
+overrides, disables its services and firewall, and reapplies saved VPN-only and
+excluded policies to the new backend. A backup of the old registry is retained
+as `~/.config/pia-wireguard/apps.json.pre-bash-backend`. Pending migration choices
+are in `~/.local/state/walker-vpn/legacy-migration.json`; retry `./install.sh` if
+an upgrade is interrupted. The old installed Python client is removed after a
+successful migration.
 
-Select **PIA** beside any panel clock. Search by country or location, or choose
-**Optimal** to try the lowest-latency eligible locations first. **PIA
-Credentials…** verifies your VPN login and saves it in KDE Wallet. **Disconnect**
-takes the host tunnel down before disabling the kill switch so ordinary internet
-access resumes. It also works when the tunnel is already down and the switch
-is on.
-Use **System kill switch** to control host-wide blocking. Turning it off allows
-ordinary host networking when disconnected. The setting persists across
-reboots, and each protected Flatpak retains its separate network policy.
+## Panel controls
 
-Routine connections and app launches use the socket-activated
-`pia-control.socket` systemd service. Installation requires one-time KDE
-administrator authorization. The socket accepts requests from the authorized
-desktop account, and Vopono launches apps as that account. The service keeps
-temporary WireGuard keys and profiles in root-owned runtime storage. When
-the kill switch is active, the service makes narrowly scoped requests to
-validate wallet credentials and register the tunnel.
+Choose a country or location, or **Optimal** for the fastest reachable location.
+The bounded list supports search. **Disconnect** stops recovery, tears down the
+host tunnel and opens the kill switch. A dropped tunnel keeps the armed firewall
+in place while the ten-second maintenance timer attempts recovery.
 
-The systemd reconnect timer checks the active WireGuard profile every ten
-seconds. It restarts a missing or down interface and retries when WireGuard
-handshakes have gone stale. **Disconnect** cancels this recovery. Recovery uses
-the existing endpoint and key during the current boot. If the endpoint stays
-unavailable, select another location in the applet. A replacement that fails
-during WireGuard setup triggers an attempt to restore the previous tunnel.
-While the system kill switch is on, ordinary traffic remains blocked when the
-tunnel is down and excluded Flatpaks retain their direct route.
+The **System kill switch** blocks ordinary host and forwarded internet traffic
+outside the tunnel, including IPv6 and DNS. Connecting arms it by default;
+explicitly turning it off prevents automatic arming for the remainder of that
+boot. **Degraded** means the firewall needs attention. Excluded applications are
+an explicit exception to the system kill switch.
 
-## VPN-only Flatpaks
+**Reconnect on reboot** is off by default. When enabled, it remembers the current
+location and registers a fresh tunnel using the encrypted login before desktop
+sign-in. The kill switch is armed before reconnecting. Disconnect clears the
+saved boot location; connecting again resumes boot recovery if the toggle stays
+on. With this option off, the host tunnel and kill switch reset on reboot, as in
+the upstream backend. The saved account login remains available.
 
-Open **PIA → App routing… → VPN-only** and turn on **VPN required** beside an app. Quit
-the app before changing its setting. Afterward use its usual Plasma application
-launcher. qBittorrent's normal launcher retains its torrent and magnet-link
-associations. Turning the switch off restores the prior launcher and network
-permissions, including unrelated Flatpak overrides.
+## App routing
 
-A command that starts the protected Flatpak directly, such as a plain
-`flatpak run`, has loopback only. The Plasma launcher starts it in Vopono's
-WireGuard namespace with a private PIA DNS file and an independent nftables
-output policy. That policy blocks direct traffic to the veth uplink and allows
-only marked WireGuard packets to reach its peer there. Ordinary native launches
-follow the system-wide policy. A user can deliberately override their own
-Flatpak permissions, and an app can ask the user to open a URL in another app.
+**App routing…** keeps the searchable list and left-side switches from the
+original applet and adds native desktop applications. Quit an app completely
+before changing its route. The applet reports a failure if it is still running;
+it does not terminate applications or discard unsaved work.
 
-Connect the main VPN before opening a protected app when the system kill switch
-is on. Vopono then runs the app's separate tunnel through the host VPN. If the
-host tunnel is unavailable, the protected launcher reports the error and keeps
-the app offline.
+- **VPN-only:** enable **VPN required**. The location selector follows the host
+  VPN by default, or chooses a dedicated **Optimal** or named PIA location.
+  A dedicated app tunnel works independently of the host tunnel. Host-following
+  apps require the host VPN; a manual Disconnect prevents launch recovery until
+  you explicitly connect again.
+- **Excluded:** enable **Exclude from VPN** to use the physical IPv4 uplink and
+  its DNS even while the host VPN or kill switch is active. Restart these apps
+  after changing network uplinks.
+- Turning the active switch off restores the previous launcher and network
+  setting. The two routes are mutually exclusive.
 
-## Apps excluded from the VPN
+Normal desktop launchers and their actions retain the saved policy. Native
+command shims apply when found through the managed command path. Explicit
+absolute native executable paths follow the host policy. Flatpaks receive a
+network override and use their managed launcher for routing; raw
+`/usr/bin/flatpak run` is blocked for managed apps. Use `walker-vpn flatpak run`
+for routed command-line Flatpak launches.
 
-Open **PIA → App routing… → Excluded** and enable **Exclude from VPN** beside
-a Flatpak. Open it from its usual launcher. IPv4 for the app can leave only on
-the selected physical network interface, including when the host VPN is active.
-It uses the physical interface’s DNS. Excluded apps are an explicit exception
-to the system kill switch and stay offline if the physical connection is unavailable.
-The VPN-only and excluded settings are mutually exclusive. Turning either setting off restores
-the prior launcher and Flatpak permissions.
+Protected app namespaces restrict direct socket traffic. Native apps use a
+filtered session bus for desktop integration; Flatpaks retain their existing
+filtered bus. Web links and local directories can open in the desktop session
+through the user socket. A host service contacted through IPC follows its own
+network policy. See [SECURITY.md](SECURITY.md).
 
-## Firewall and troubleshooting
+## Troubleshooting and recovery
 
-The system-wide `inet pia_guard` nftables table activates before NetworkManager
-at boot. When the switch is on, it blocks host and forwarded internet traffic outside `piadesk`,
-including DNS and IPv6. It permits loopback, IPv4 DHCP, the marked WireGuard
-peer, narrowly scoped temporary PIA setup traffic, and traffic between each
-excluded app’s veth and its selected physical interface. The setup helper uses
-Cloudflare DNS-over-HTTPS to resolve only the PIA bootstrap hostnames.
-
-Inspect launch errors with `journalctl -u 'pia-control@*.service' -n 80`.
-Confirm the system service is ready with `systemctl is-active pia-control.socket`.
-Refresh the cached location list with
-`~/.local/share/pia-vopono/pia-vopono locations-refresh`.
-The panel status reflects the guard service and its configured switch setting.
-A privileged global nftables flush can remove the active rules independently.
-Restarting `pia-guard.service` reloads it.
-
-## Recovery and removal
-
-Turn the per-app switches off before removing the PIA desktop client, so it can
-restore each app's previous launcher and permissions. Disconnect in the applet
-before removing the system service. The following local administrator commands
-deliberately restore ordinary host networking.
+The executable and service names retain `walker-vpn` for backend compatibility;
+the Walker application is never invoked or required.
 
 ```sh
-sudo systemctl disable --now pia-reconnect.timer pia-control.socket pia-guard.service
-sudo rm -f /etc/systemd/system/NetworkManager.service.d/50-pia-guard.conf \
-  /etc/systemd/system/pia-control.socket.d/50-desktop-account.conf \
-  /etc/systemd/system/pia-{control.socket,control@.service,guard.service,reconnect.service,reconnect.timer}
-sudo systemctl daemon-reload
-sudo nft destroy table inet pia_guard
-sudo ip -4 rule del pref 101 fwmark 0x504941 lookup main
+walker-vpn status
+systemctl status walker-vpn.socket walker-vpn-maintain.timer
+journalctl -u 'walker-vpn@*.service' -u walker-vpn-maintain.service -n 80
+walker-vpn kill-off
+sudo systemctl start walker-vpn-emergency-open.service
 ```
 
-Remove the PIA widgets in Plasma edit mode, then remove the package with
-`kpackagetool6 --type Plasma/Applet --remove local.pia.wireguard.routing`.
+To remove: close routed apps, run `walker-vpn restore --all`, disconnect through
+the panel, then disable `walker-vpn.socket` and `walker-vpn-maintain.timer` and
+remove the applet. Remove the user `walker-vpn-links.socket` and the Plasma
+`~/.config/plasma-workspace/env/pia-routing.sh` environment file as well.
 
 ## Development
 
 ```sh
-python3 -m unittest discover -s tests -v
-bash -n install.sh
-bash -n guard/install
+bash tests/run.sh
+# Real firewall/namespace tests in disposable network and mount namespaces:
+bash tests/transport-kernel.sh
 ```
 
-The automated checks exercise source syntax, initial location discovery, and
-socket authorization using mocks. Live firewall and application isolation
-tests require a Bazzite KDE session with an active network connection.
+The suite checks credential framing, routing priorities, launcher preservation,
+Flatpak updates, repeated launches, app cleanup, desktop bus filtering,
+link handling, timezone selection, the Plasma adapter and legacy migration.
+The kernel fixture requires unprivileged user namespaces and dnsmasq.
+Live PIA connectivity still needs a valid account and network access.
 
-The integration code is MIT licensed. `pia-ca.crt` is the public PIA
-certificate used by the [official manual connection scripts](https://github.com/pia-foss/manual-connections/blob/master/ca.rsa.4096.crt).
-Vopono is installed separately under its upstream license.
+The integration and upstream backend are MIT licensed; see [LICENSE](LICENSE)
+and [UPSTREAM](UPSTREAM). `lib/pia-ca.crt` is PIA's public CA certificate.

@@ -1,9 +1,0 @@
-[Unit]
-Description=Check the active PIA WireGuard tunnel
-
-[Timer]
-OnCalendar=*-*-* *:*:00,10,20,30,40,50
-AccuracySec=1s
-
-[Install]
-WantedBy=timers.target

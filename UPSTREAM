@@ -1,0 +1,7 @@
+https://github.com/Kommynct/walker-vpn
+Commit: 5a5ce04bdfadbec3327f5af44c724a4d77ba395b
+
+PIA provider, firewall, namespace, session and launcher implementation adapted
+under the MIT license. Walker, Elephant, Waybar and NixOS integration replaced
+with a Plasma GUI and a Bazzite/systemd installer. Internal walker-vpn names
+are retained for compatibility with the routing engine and its tests.

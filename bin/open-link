@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+set -uo pipefail
+export LC_ALL=C
+
+web_url() {
+    [[ ${#1} -le 8192 && $1 =~ ^https?://[^[:space:][:cntrl:]]+$ ]]
+}
+
+local_directory() {
+    local path=$1 decoded= escape
+    (( ${#path} <= 8192 )) || return 1
+    case $path in
+        file:///*|file://localhost/*)
+            path=${path#file://}
+            path=${path#localhost}
+            [[ $path != *[?#]* ]] || return 1
+            while [[ $path == *%* ]]; do
+                decoded+=${path%%\%*}
+                path=${path#*%}
+                escape=${path:0:2}
+                [[ $escape =~ ^[[:xdigit:]]{2}$ && $escape != 00 ]] || return 1
+                printf -v escape '%b' "\\x$escape"
+                decoded+=$escape
+                path=${path:2}
+            done
+            path=$decoded$path
+            ;;
+    esac
+    [[ $path == /* && $path != //* && $path != *[[:cntrl:]]* && -d $path ]] || return 1
+    printf '%s\n' "$path"
+}
+
+case $1 in
+    client)
+        opener=$2 transport=$3
+        shift 3
+        target=
+        if [[ $# == 1 ]]; then
+            case $1 in
+                http://*|https://*) web_url "$1" || exit 2; target=$1 ;;
+                /*|file://*) target=$(local_directory "$1") || target= ;;
+            esac
+        fi
+        if [[ -n $target ]]; then
+            socket=$XDG_RUNTIME_DIR/walker-vpn-links.sock
+            [[ -S $socket ]] || { echo 'The desktop link opener is unavailable.' >&2; exit 1; }
+            response=$(printf '%s\n' "$target" | "$transport" -t 12 -T 14 - "UNIX-CONNECT:$socket") || exit 1
+            [[ $response == ok ]] || { echo 'The desktop could not open the link.' >&2; exit 1; }
+        else
+            unset BROWSER
+            exec "$opener" "$@"
+        fi
+        ;;
+    serve)
+        IFS= read -r -n 8193 -t 5 target || exit 2
+        if ! web_url "$target"; then
+            [[ $target == /* ]] && local_directory "$target" >/dev/null || exit 2
+        fi
+        if "$2" open "$target" </dev/null >/dev/null 2>&1; then
+            printf 'ok\n'
+        else
+            printf 'error\n'
+            exit 1
+        fi
+        ;;
+    *) exit 2 ;;
+esac

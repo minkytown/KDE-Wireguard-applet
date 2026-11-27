@@ -1,0 +1,11 @@
+[Unit]
+Description=PIA Plasma VPN control socket
+[Socket]
+ListenStream=/run/walker-vpn.sock
+Accept=true
+SocketMode=0600
+SocketUser=@ACCOUNT@
+MaxConnections=32
+RemoveOnStop=true
+[Install]
+WantedBy=sockets.target

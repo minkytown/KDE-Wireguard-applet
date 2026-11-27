@@ -13,7 +13,7 @@ PlasmoidItem {
     readonly property string helper: {
         const home = StandardPaths.writableLocation(StandardPaths.HomeLocation).toString()
         const path = decodeURIComponent(home.replace(/^file:\/\//, ""))
-            + "/.local/share/pia-vopono/pia-vopono"
+            + "/.local/share/pia-vopono/bin/walker-vpn"
         return "'" + path.replace(/'/g, "'\\''") + "'"
     }
     property string connectionStatus: "Checking status"
@@ -22,11 +22,15 @@ PlasmoidItem {
     property string killSwitchStatus: "Checking"
     property string killSwitchError: ""
     property bool killSwitchPending: false
+    property string bootReconnectStatus: "Checking"
+    property string bootReconnectError: ""
+    property bool bootReconnectPending: false
     property bool appsVisible: false
     property bool appsPending: false
     property var applications: []
     property var requiredApps: ({})
     property var excludedApps: ({})
+    property var appRegions: ({})
     property bool exclusionsVisible: false
     property string appCatalogKey: ""
     property string appsError: ""
@@ -89,12 +93,15 @@ PlasmoidItem {
                     }
                     const requirements = {}
                     const exclusions = {}
+                    const regions = {}
                     for (const app of response.apps) {
                         requirements[app.id] = app.required
                         exclusions[app.id] = app.excluded
+                        regions[app.id] = app.region || "host"
                     }
                     root.requiredApps = requirements
                     root.excludedApps = exclusions
+                    root.appRegions = regions
                 }
                 root.appsError = response.error || ""
             } catch (error) {
@@ -134,9 +141,11 @@ PlasmoidItem {
                 const status = JSON.parse(data.stdout)
                 root.connectionStatus = status.connection
                 root.killSwitchStatus = status.killSwitch
+                root.bootReconnectStatus = status.bootReconnect || "Unavailable"
             } catch (error) {
                 root.connectionStatus = "Status unavailable"
                 root.killSwitchStatus = "Unavailable"
+                root.bootReconnectStatus = "Unavailable"
             }
         }
     }
@@ -157,6 +166,19 @@ PlasmoidItem {
             else
                 root.killSwitchError = "Could not change the system kill switch."
             root.killSwitchPending = false
+        }
+    }
+
+    Plasma5Support.DataSource {
+        id: bootReconnectCommand
+        engine: "executable"
+        onNewData: (sourceName, data) => {
+            bootReconnectCommand.disconnectSource(sourceName)
+            if (Number(data["exit code"]) === 0)
+                root.bootReconnectStatus = sourceName.endsWith(" on") ? "On" : "Off"
+            else
+                root.bootReconnectError = "Could not change reconnect on reboot."
+            root.bootReconnectPending = false
         }
     }
 
@@ -199,11 +221,11 @@ PlasmoidItem {
 
             PlasmaComponents.Switch {
                 Layout.fillWidth: true
-                text: root.killSwitchStatus === "Unavailable"
+                text: root.killSwitchStatus === "Degraded" ? "System kill switch needs attention" : root.killSwitchStatus === "Unavailable"
                     ? "System kill switch unavailable" : "System kill switch"
-                checked: root.killSwitchStatus === "On"
+                checked: root.killSwitchStatus === "On" || root.killSwitchStatus === "Degraded"
                 enabled: !root.killSwitchPending
-                    && (root.killSwitchStatus === "On" || root.killSwitchStatus === "Off")
+                    && (root.killSwitchStatus === "On" || root.killSwitchStatus === "Off" || root.killSwitchStatus === "Degraded")
                 onToggled: {
                     root.killSwitchError = ""
                     root.killSwitchPending = true
@@ -215,6 +237,27 @@ PlasmoidItem {
                 Layout.fillWidth: true
                 visible: root.killSwitchError.length > 0
                 text: root.killSwitchError
+                wrapMode: Text.Wrap
+            }
+
+            PlasmaComponents.Switch {
+                Layout.fillWidth: true
+                text: "Reconnect on reboot"
+                checked: root.bootReconnectStatus === "On"
+                enabled: !root.bootReconnectPending
+                    && (root.bootReconnectStatus === "On" || root.bootReconnectStatus === "Off")
+                onToggled: {
+                    root.bootReconnectError = ""
+                    root.bootReconnectPending = true
+                    bootReconnectCommand.connectSource(root.helper + " boot-reconnect-set "
+                        + (checked ? "on" : "off"))
+                }
+            }
+
+            PlasmaComponents.Label {
+                Layout.fillWidth: true
+                visible: root.bootReconnectError.length > 0
+                text: root.bootReconnectError
                 wrapMode: Text.Wrap
             }
 
@@ -235,9 +278,9 @@ PlasmoidItem {
             ListView {
                 id: regionList
                 Layout.fillWidth: true
-                Layout.minimumHeight: Kirigami.Units.gridUnit * 8
-                Layout.preferredHeight: Kirigami.Units.gridUnit * 8
-                Layout.maximumHeight: Kirigami.Units.gridUnit * 8
+                Layout.minimumHeight: Kirigami.Units.gridUnit * 7
+                Layout.preferredHeight: Layout.minimumHeight
+                Layout.maximumHeight: Layout.minimumHeight
                 enabled: !root.busy
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
@@ -291,6 +334,8 @@ PlasmoidItem {
             apps: root.applications
             vpnRequired: root.exclusionsVisible ? root.excludedApps : root.requiredApps
             excludedMode: root.exclusionsVisible
+            regions: root.appRegions
+            locations: [{id: "host", name: "Follow system VPN"}].concat(root.locations)
             pending: root.appsPending
             errorMessage: root.appsError
             onBackRequested: root.appsVisible = false
@@ -298,10 +343,14 @@ PlasmoidItem {
                 root.exclusionsVisible = excluded
                 root.appsError = ""
             }
+            onRegionRequested: (appId, region) => {
+                if (root.isAppId(appId) && /^[a-zA-Z0-9_-]{1,64}$/.test(region))
+                    root.appsRequest("app-set-json " + appId + " on --mode vpn " + region)
+            }
             onToggleRequested: (appId, required) => {
                 if (root.isAppId(appId))
                     root.appsRequest("app-set-json " + appId + (required ? " on" : " off")
-                        + (root.exclusionsVisible ? " --mode direct" : " --mode vpn"))
+                        + (root.exclusionsVisible ? " --mode direct" : " --mode vpn " + (root.appRegions[appId] || "host")))
             }
         }
     }

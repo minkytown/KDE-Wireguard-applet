@@ -1,0 +1,9 @@
+[Unit]
+Description=PIA desktop link opener
+[Socket]
+ListenStream=%t/walker-vpn-links.sock
+Accept=true
+SocketMode=0600
+MaxConnections=16
+[Install]
+WantedBy=sockets.target

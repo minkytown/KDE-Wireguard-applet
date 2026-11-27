@@ -1,0 +1,15 @@
+[Unit]
+Description=PIA VPN maintain
+[Service]
+Type=oneshot
+UMask=0077
+NoNewPrivileges=true
+TimeoutStopSec=12s
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+Environment="HOME=/var/lib/walker-vpn"
+Environment="XDG_CONFIG_HOME=/var/lib/walker-vpn"
+Environment="SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt"
+Environment="WALKER_VPN_FLATPAK=/usr/bin/flatpak"
+Environment="WALKER_VPN_LINK_OPENER=/usr/local/lib/kde-wireguard-applet/opener/xdg-open"
+Environment="WALKER_VPN_DESKTOP_OPENER=/usr/bin/xdg-open"
+ExecStart=/usr/bin/bash /usr/local/lib/kde-wireguard-applet/lib/service.sh /usr/local/lib/kde-wireguard-applet/lib @ACCOUNT@ maintain
