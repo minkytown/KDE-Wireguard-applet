@@ -61,7 +61,7 @@ panel_command() {
     shift
     case $action in
         panel-status)
-            request status | jq -ec '{
+            read_status | jq -ec '{
                 connection: (({connected:"Connected",connecting:"Connecting",reconnecting:"Reconnecting"}[.connection] // "Disconnected")
                     + (if .region != "" then " · " + .region else "" end)),
                 killSwitch: ({on:"On",off:"Off",degraded:"Degraded"}[.kill] // "Unavailable"),

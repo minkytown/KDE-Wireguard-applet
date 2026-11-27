@@ -19,3 +19,9 @@ A launch requires a separate mount and network namespace, the expected interface
 The maintenance timer can rebuild a missing or incomplete host firewall table from runtime state. An armed switch reports degraded while its required firewall layout is missing. KDE WireGuard applet enables IPv4 forwarding on its own host-side app links and host WireGuard interface. Excluded app startup enables IPv4 forwarding on the selected physical uplink. It leaves host-wide and unrelated interface forwarding settings alone. A privileged firewall flush can remove host kill-switch enforcement until that rebuild completes.
 
 Testing the kernel, Flatpak, systemd, and PIA implementations themselves is outside the scope of this project.
+
+On Bazzite, each forwarded app's host-side veth is registered in firewalld's
+runtime trusted zone after the namespace firewall, host input block, pinned
+source/uplink rules and route-denial rule are installed. This allows forwarding
+through Fedora's additional firewall layer. Cleanup removes that interface
+binding. No physical interface or host-wide firewalld policy is made trusted.

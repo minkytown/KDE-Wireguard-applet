@@ -20,6 +20,7 @@ jq -e '.apps[] | select(.id == "org.example.One.desktop") | .required and (.regi
 request() {
     if [[ $1 == locations ]]; then printf '[]\n'; else printf '%s\n' '{"connection":"reconnecting","region":"uk","kill":"degraded","bootReconnect":"On"}'; fi
 }
+read_status() { request status; }
 panel_command panel-status | jq -e '.connection=="Reconnecting · uk" and .killSwitch=="Degraded" and .bootReconnect=="On"' >/dev/null
 panel_command locations-json | jq -e '.[0].id=="optimal"' >/dev/null
 install_desktop() { [[ $* == 'org.example.One.desktop vpn optimal' ]]; }

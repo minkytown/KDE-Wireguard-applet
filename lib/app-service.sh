@@ -42,6 +42,9 @@ app_cleanup() {
     fi
     # Keep the egress policy in place until the host veth is gone.
     if [[ -n ${veth:-} ]]; then
+        if [[ ${firewalld_interface:-} == "$veth" ]] && systemctl is-active --quiet firewalld; then
+            firewall-cmd --quiet --zone=trusted --remove-interface="$veth" >&2 || :
+        fi
         if ip link show dev "$veth" >/dev/null 2>&1; then
             ip link del "$veth" >&2 || return 1
         fi
@@ -206,6 +209,15 @@ RULES
         pair=$indices
         printf '%s %s %s\n' "$veth" "$uplink" "$pair" > "$run/direct-$namespace" || return 1
     fi
+    # Fedora's firewalld otherwise rejects forwarding to the host VPN after
+    # our own chains accept it. Trust only this app's veth, after installing
+    # the source/uplink restrictions and default-drop namespace policy above.
+    # The input chain still blocks this veth from reaching host services.
+    if systemctl is-active --quiet firewalld; then
+        command -v firewall-cmd >/dev/null || return 1
+        firewall-cmd --quiet --zone=trusted --add-interface="$veth" >&2 || return 1
+        firewalld_interface=$veth
+    fi
 }
 
 app_veth_addresses() {
@@ -268,7 +280,7 @@ launch_app() {
     local app_kind app_id uid gid home user_entry job forward_files argc result=0 cleanup_uid=
     mode= region= namespace= work= veth= pair= active_record= active_lease= app_iface=
     owns_netns=false owns_netns_dns=false owns_wireguard=false wireguard_moved=false app_peer= namespace_keeper=
-    app_route_table= app_route_denied=false
+    app_route_table= app_route_denied=false firewalld_interface=
     local item
     local -a fields=() args=() session=()
     # NUL-delimited fields preserve spaces, empty arguments, and newlines.

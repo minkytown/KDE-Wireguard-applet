@@ -60,5 +60,5 @@ if command -v kwallet-query >/dev/null && command -v qdbus-qt6 >/dev/null; then
         fi
     fi
 fi
-printf '%s\n' 'Panel VPN upgraded. Use PIA Credentials… once to save the login for the new backend.'
+printf '%s\n' 'Panel VPN upgraded.'
 printf '%s\n' 'Existing panel widgets keep their position. Sign out and in to update native command routing in the desktop session.'

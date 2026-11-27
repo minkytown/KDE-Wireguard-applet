@@ -81,6 +81,8 @@ network override and use their managed launcher for routing; raw
 `/usr/bin/flatpak run` is blocked for managed apps. Use `walker-vpn flatpak run`
 for routed command-line Flatpak launches.
 
+On Bazzite, forwarded app veth interfaces receive a temporary firewalld trusted-zone binding. The applet’s own firewall still blocks host access and pins traffic to the selected uplink. Cleanup removes the binding.
+
 Protected app namespaces restrict direct socket traffic. Native apps use a
 filtered session bus for desktop integration; Flatpaks retain their existing
 filtered bus. Web links and local directories can open in the desktop session
