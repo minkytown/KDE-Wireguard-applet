@@ -50,9 +50,6 @@ done
 if [[ -f /etc/pia-wireguard/reconnect-on-boot ]]; then
     touch /var/lib/walker-vpn/reconnect-on-boot
 fi
-rm -f /etc/pia-wireguard/guard.py /etc/pia-wireguard/control.py /etc/pia-wireguard/pia-vopono
-if [[ -d /etc/pia-wireguard/__pycache__ ]]; then rm -rf /etc/pia-wireguard/__pycache__; fi
-rm -f /etc/systemd/system/pia-{control.socket,control@.service,guard.service,reconnect.service,reconnect.timer}
-rm -f /etc/systemd/system/pia-control.socket.d/50-desktop-account.conf
+bash "$bundle/system/cleanup-legacy"
 systemctl daemon-reload
 systemctl enable --now walker-vpn.socket walker-vpn-maintain.timer

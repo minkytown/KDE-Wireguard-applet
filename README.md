@@ -29,12 +29,18 @@ arguments. Sign out and in after installation to apply the native command path
 to the desktop session.
 
 Upgrading restores the previous client's managed launchers and Flatpak network
-overrides, disables its services and firewall, and reapplies saved VPN-only and
-excluded policies to the new backend. A backup of the old registry is retained
-as `~/.config/pia-wireguard/apps.json.pre-bash-backend`. Pending migration choices
-are in `~/.local/state/walker-vpn/legacy-migration.json`; retry `./install.sh` if
-an upgrade is interrupted. The old installed Python client is removed after a
-successful migration.
+permissions, disables its services and firewall, and reapplies saved VPN-only
+and excluded policies to the new backend. It then removes the retired system
+files, Vopono binaries, duplicate user helper, caches and broken shortcuts.
+The panels use the single system helper at `/usr/local/bin/walker-vpn`.
+
+During migration, the previous registry is backed up under
+`~/.config/pia-wireguard/apps.json.pre-bash-backend`. After success, one copy
+remains at `~/.local/state/walker-vpn/legacy-migration.completed.json` and the
+old configuration directory is removed. Pending choices are saved in
+`~/.local/state/walker-vpn/legacy-migration.json`; retry `./install.sh` if an
+upgrade is interrupted. An existing encrypted backend login is retained on
+reinstallation; wallet import is only attempted when no login has been saved.
 
 ## Panel controls
 

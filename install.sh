@@ -24,11 +24,7 @@ fi
 if [[ -n ${SUDO_ASKPASS:-} ]]; then sudo -A -v; else sudo -v; fi
 bash "$bundle/migrate-legacy.sh" --restore
 sudo -- /usr/bin/bash "$bundle/system/install" "$bundle" "$USER"
-destination="$HOME/.local/share/pia-vopono"
-install -d -m 0755 "$destination/bin" "$destination/lib"
-install -m 0755 "$bundle/bin/"* "$destination/bin/"
-install -m 0644 "$bundle/lib/"* "$destination/lib/"
-# The helper path and applet ID stay stable on existing panels.
+# Keep the applet ID and panel positions; use only the system helper.
 id=local.pia.wireguard.routing
 if kpackagetool6 --type Plasma/Applet --show "$id" >/dev/null 2>&1; then
     kpackagetool6 --type Plasma/Applet --upgrade "$bundle/plasmoid"
@@ -43,11 +39,11 @@ ENV
 systemctl --user daemon-reload
 systemctl --user enable --now walker-vpn-links.socket
 bash "$bundle/migrate-legacy.sh" --apply
-# Retire only the old implementation files after successful migration.
-rm -f -- "$destination/pia-vopono" "$destination/pia_apps.py" "$destination/pia-ca.crt"
-if [[ -d $destination/__pycache__ ]]; then rm -rf -- "$destination/__pycache__"; fi
+bash "$bundle/cleanup-user.sh"
+systemctl --user try-restart plasma-plasmashell.service
 # Import an existing wallet login through a pipe. The secret never enters argv.
-if command -v kwallet-query >/dev/null && command -v qdbus-qt6 >/dev/null; then
+if /usr/local/bin/walker-vpn status | jq -e '.login == false' >/dev/null &&
+   command -v kwallet-query >/dev/null && command -v qdbus-qt6 >/dev/null; then
     wallet=$(qdbus-qt6 org.kde.kwalletd6 /modules/kwalletd6 org.kde.KWallet.networkWallet 2>/dev/null) || wallet=
     if [[ -n $wallet ]]; then
         if kwallet-query -r 'PIA VPN login' -f 'PIA WireGuard Apps' "$wallet" 2>/dev/null |

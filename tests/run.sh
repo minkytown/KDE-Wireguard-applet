@@ -3,6 +3,7 @@ set -euo pipefail
 root=$(cd -- "${BASH_SOURCE[0]%/*}/.." && pwd)
 while IFS= read -r file; do bash -n "$file"; done < <(find "$root/bin" "$root/lib" "$root/system" -type f ! -name '*.crt' ! -name '*.service' ! -name '*.socket' ! -name '*.timer')
 bash -n "$root/install.sh"
+bash -n "$root/cleanup-user.sh"
 bash -n "$root/migrate-legacy.sh"
 for test in "$root/tests/"*.sh; do
     case ${test##*/} in run.sh|transport-kernel.sh) continue ;; esac

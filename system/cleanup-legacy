@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Remove only the retired PIA/Vopono installation, never current VPN state.
+set -euo pipefail
+(( EUID == 0 )) || exit 2
+if ip link show dev piadesk >/dev/null 2>&1 ||
+   ip netns list | grep -Eq '(^|[[:space:]])(vopono|pia)'; then
+    echo 'The retired VPN still has a live interface or namespace; disconnect it first.' >&2
+    exit 1
+fi
+for unit in pia-control.socket pia-reconnect.timer pia-guard.service; do
+    if [[ $(systemctl show "$unit" -p LoadState --value) != not-found ]]; then
+        if systemctl is-active --quiet "$unit"; then
+            echo "The retired $unit is still active; stop it before cleanup." >&2
+            exit 1
+        fi
+        systemctl disable "$unit" >/dev/null 2>&1 || :
+    fi
+done
+if systemctl list-units 'pia-control@*.service' --state=running --no-legend | grep -q .; then
+    echo 'An old VPN control request is still running; wait for it to finish.' >&2
+    exit 1
+fi
+# This dependency must be removed before the old service can be forgotten.
+rm -f /etc/systemd/system/NetworkManager.service.d/50-pia-guard.conf
+rm -f /etc/systemd/system/pia-{control.socket,control@.service,guard.service,reconnect.service,reconnect.timer}
+rm -f /etc/systemd/system/pia-control.socket.d/50-desktop-account.conf
+rmdir /etc/systemd/system/pia-control.socket.d 2>/dev/null || :
+if nft list table inet pia_guard >/dev/null 2>&1; then nft delete table inet pia_guard; fi
+ip -4 rule del pref 101 fwmark 0x504941 lookup main 2>/dev/null || :
+# These directories belong exclusively to the retired client. This also
+# removes any old saved WireGuard keys instead of retaining obsolete copies.
+rm -rf -- /etc/pia-wireguard /var/lib/pia-wireguard /run/pia-vopono /run/pia-desktop
+systemctl daemon-reload
+for unit in pia-control.socket pia-reconnect.timer pia-guard.service pia-reconnect.service; do
+    systemctl reset-failed "$unit" >/dev/null 2>&1 || :
+done
+printf '%s\n' 'Retired PIA system backend removed.'

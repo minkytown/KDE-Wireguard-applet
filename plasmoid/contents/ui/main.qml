@@ -1,5 +1,4 @@
 import QtQuick
-import QtCore
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 import org.kde.plasma.components as PlasmaComponents
@@ -10,12 +9,7 @@ import org.kde.plasma.plasma5support as Plasma5Support
 PlasmoidItem {
     id: root
 
-    readonly property string helper: {
-        const home = StandardPaths.writableLocation(StandardPaths.HomeLocation).toString()
-        const path = decodeURIComponent(home.replace(/^file:\/\//, ""))
-            + "/.local/share/pia-vopono/bin/walker-vpn"
-        return "'" + path.replace(/'/g, "'\\''") + "'"
-    }
+    readonly property string helper: "/usr/local/bin/walker-vpn"
     property string connectionStatus: "Checking status"
     property var locations: []
     property string catalogError: ""
