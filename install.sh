@@ -34,12 +34,15 @@ fi
 install -d "$HOME/.config/systemd/user" "$HOME/.config/plasma-workspace/env"
 install -m 0644 "$bundle/system/user/"* "$HOME/.config/systemd/user/"
 cat > "$HOME/.config/plasma-workspace/env/pia-routing.sh" <<'ENV'
-export PATH="$HOME/.local/state/walker-vpn/apps/bin:/usr/local/bin:$PATH"
+export PATH="${XDG_STATE_HOME:-$HOME/.local/state}/walker-vpn/apps/bin:/usr/local/bin:$PATH"
 ENV
 systemctl --user daemon-reload
 systemctl --user enable --now walker-vpn-links.socket
 bash "$bundle/migrate-legacy.sh" --apply
 bash "$bundle/cleanup-user.sh"
+desktop_path=$(systemctl --user show-environment | sed -n 's/^PATH=//p')
+export PATH="${XDG_STATE_HOME:-$HOME/.local/state}/walker-vpn/apps/bin:/usr/local/bin:${desktop_path:-$PATH}"
+systemctl --user import-environment PATH
 systemctl --user try-restart plasma-plasmashell.service
 # Import an existing wallet login through a pipe. The secret never enters argv.
 if /usr/local/bin/walker-vpn status | jq -e '.login == false' >/dev/null &&

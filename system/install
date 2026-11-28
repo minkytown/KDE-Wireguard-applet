@@ -5,6 +5,11 @@ bundle=$(realpath -e -- "$1")
 account=$2
 [[ $account =~ ^[a-z_][a-z0-9_-]*$ ]] && id "$account" >/dev/null || exit 2
 [[ -r /etc/ssl/certs/ca-bundle.crt ]] || { echo "System TLS CA bundle is missing." >&2; exit 1; }
+if [[ -e /usr/local/bin/flatpak || -L /usr/local/bin/flatpak ]] &&
+   [[ $(readlink /usr/local/bin/flatpak) != /usr/local/lib/kde-wireguard-applet/bin/flatpak ]]; then
+    echo 'An unrelated /usr/local/bin/flatpak already exists; resolve that conflict before installing.' >&2
+    exit 1
+fi
 # Never overlay the old firewall while its tunnel or namespaces are active.
 if systemctl is-active --quiet pia-control.socket; then
     home_dir=$(getent passwd "$account" | cut -d: -f6)
@@ -31,6 +36,7 @@ install -d -m 0755 /usr/local/lib/kde-wireguard-applet/lib /usr/local/lib/kde-wi
 install -m 0644 "$bundle/lib/"* /usr/local/lib/kde-wireguard-applet/lib/
 install -m 0755 "$bundle/bin/"* /usr/local/lib/kde-wireguard-applet/bin/
 ln -sfn /usr/local/lib/kde-wireguard-applet/bin/walker-vpn /usr/local/bin/walker-vpn
+ln -sfn /usr/local/lib/kde-wireguard-applet/bin/flatpak /usr/local/bin/flatpak
 install -d -m 0755 /usr/local/lib/kde-wireguard-applet/opener
 cat > /usr/local/lib/kde-wireguard-applet/opener/xdg-open <<'OPENER'
 #!/usr/bin/env bash
@@ -52,4 +58,12 @@ if [[ -f /etc/pia-wireguard/reconnect-on-boot ]]; then
 fi
 bash "$bundle/system/cleanup-legacy"
 systemctl daemon-reload
+install -d /etc/systemd/system/NetworkManager.service.d
+cat > /etc/systemd/system/NetworkManager.service.d/50-walker-vpn-guard.conf <<'GUARD'
+[Unit]
+Requires=walker-vpn-boot-guard.service
+After=walker-vpn-boot-guard.service
+GUARD
+systemctl daemon-reload
+systemctl enable walker-vpn-boot-guard.service
 systemctl enable --now walker-vpn.socket walker-vpn-maintain.timer

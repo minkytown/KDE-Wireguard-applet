@@ -52,12 +52,15 @@ in place while the ten-second maintenance timer attempts recovery.
 The **System kill switch** blocks ordinary host and forwarded internet traffic
 outside the tunnel, including IPv6 and DNS. Connecting arms it by default;
 explicitly turning it off prevents automatic arming for the remainder of that
-boot. **Degraded** means the firewall needs attention. Excluded applications are
+boot. A failed connection keeps automatically armed protection on; use Disconnect
+or explicitly turn the switch off to restore ordinary networking. **Degraded**
+means the firewall needs attention. Excluded applications are
 an explicit exception to the system kill switch.
 
 **Reconnect on reboot** is off by default. When enabled, it remembers the current
 location and registers a fresh tunnel using the encrypted login before desktop
-sign-in. The kill switch is armed before reconnecting. Disconnect clears the
+sign-in. A dedicated boot guard arms the kill switch before NetworkManager can
+start networking, and recovery registers the tunnel afterward. Disconnect clears the
 saved boot location; connecting again resumes boot recovery if the toggle stays
 on. With this option off, the host tunnel and kill switch reset on reboot, as in
 the upstream backend. The saved account login remains available.
@@ -87,16 +90,19 @@ Normal desktop launchers and their actions retain the saved policy. Native
 command shims apply when found through the managed command path. Explicit
 absolute native executable paths follow the host policy. Flatpaks receive a
 network override and use their managed launcher for routing; raw
-`/usr/bin/flatpak run` is blocked for managed apps. Use `walker-vpn flatpak run`
-for routed command-line Flatpak launches.
+`/usr/bin/flatpak run` has loopback-only networking for managed apps. The normal
+`flatpak run` command uses the installed routing wrapper, while preserving the original
+desktop-bus and portal behavior. Use the managed launcher or that normal command.
+An explicit absolute executable path bypasses a command wrapper.
 
 On Bazzite, forwarded app veth interfaces receive a temporary firewalld trusted-zone binding. The applet’s own firewall still blocks host access and pins traffic to the selected uplink. Cleanup removes the binding.
 
-Protected app namespaces restrict direct socket traffic. Native apps use a
-filtered session bus for desktop integration; Flatpaks retain their existing
-filtered bus. Web links and local directories can open in the desktop session
-through the user socket. A host service contacted through IPC follows its own
-network policy. See [SECURITY.md](SECURITY.md).
+Protected app namespaces restrict direct socket traffic. Native apps use the
+upstream filtered session bus; Flatpaks keep their original portal behavior.
+Magnet links and torrent files use qBittorrent's managed desktop handler,
+independently of the browser's VPN routing setting. External applications opened
+through desktop services follow their own configured routing policy.
+See [SECURITY.md](SECURITY.md) for the trust boundaries.
 
 ## Troubleshooting and recovery
 
@@ -113,7 +119,10 @@ sudo systemctl start walker-vpn-emergency-open.service
 
 To remove: close routed apps, run `walker-vpn restore --all`, disconnect through
 the panel, then disable `walker-vpn.socket` and `walker-vpn-maintain.timer` and
-remove the applet. Remove the user `walker-vpn-links.socket` and the Plasma
+remove the applet. Before disabling the boot guard, remove
+`/etc/systemd/system/NetworkManager.service.d/50-walker-vpn-guard.conf` and reload
+systemd. Remove the `/usr/local/bin/flatpak` routing symlink when removing the
+backend. Remove the user `walker-vpn-links.socket` and the Plasma
 `~/.config/plasma-workspace/env/pia-routing.sh` environment file as well.
 
 ## Development

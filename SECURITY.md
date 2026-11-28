@@ -25,3 +25,24 @@ runtime trusted zone after the namespace firewall, host input block, pinned
 source/uplink rules and route-denial rule are installed. This allows forwarding
 through Fedora's additional firewall layer. Cleanup removes that interface
 binding. No physical interface or host-wide firewalld policy is made trusted.
+
+Boot reconnect is guarded before NetworkManager starts networking. Its required
+oneshot service fails closed if firewall initialization fails. A failed provider
+registration or tunnel replacement does not automatically disarm protection.
+Panel status uses a recent service heartbeat or a fresh control query.
+
+D-Bus and portal behavior remain unchanged from the upstream implementation.
+Incoming magnet and torrent-file launches use their managed desktop handler and
+preserve arguments into qBittorrent's protected namespace, regardless of the
+browser's own routing setting. A host service or external application opened
+through IPC follows its own network policy; network namespaces do not force
+that separate process to inherit the sender's route.
+Use the managed launcher or normal `flatpak run` wrapper. Explicit native
+executable paths bypass command wrappers and follow the host policy.
+
+The desktop account or an administrator can deliberately edit overrides,
+policies, binaries or firewall rules. This is protection against accidental
+routing mistakes, not a boundary against malicious software with that account's
+control access. Local file operations and permitted IPC services retain their
+own host behavior. Cold-boot ordering is checked with systemd's dependency
+validator; a reboot is required to verify a particular machine's full boot path.

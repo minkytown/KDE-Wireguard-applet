@@ -1,0 +1,16 @@
+[Unit]
+Description=Arm PIA protection before networking for boot reconnect
+DefaultDependencies=no
+After=local-fs.target systemd-tmpfiles-setup.service
+Before=network-pre.target NetworkManager.service shutdown.target
+Wants=network-pre.target
+Conflicts=shutdown.target
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+UMask=0077
+NoNewPrivileges=true
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+ExecStart=/usr/bin/bash /usr/local/lib/kde-wireguard-applet/lib/service.sh /usr/local/lib/kde-wireguard-applet/lib @ACCOUNT@ boot-guard
+[Install]
+WantedBy=multi-user.target

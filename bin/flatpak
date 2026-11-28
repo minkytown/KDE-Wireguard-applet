@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+case ${1:-} in
+    run|-v|--verbose|--ostree-verbose)
+        exec /usr/local/bin/walker-vpn flatpak "$@"
+        ;;
+    *) exec /usr/bin/flatpak "$@" ;;
+esac

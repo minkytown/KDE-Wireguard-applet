@@ -52,7 +52,7 @@ publish_view() {
 
 publish_status() {
     local value
-    value=$(status) && publish_view status.json "$value"
+    value=$(status) && publish_view status.json "$value" && touch "$view/status.json"
 }
 
 acquire() {
@@ -126,8 +126,13 @@ build_profile() {
 }
 
 connect_host() {
-    local wanted=$1 temp selected saved=0 armed_here=0
+    local wanted=$1 temp selected saved=0
     temp=$(mktemp -d "$run/connect.XXXXXXXX") || return 1
+    # Arm before provider requests, and retain protection if registration or
+    # tunnel setup fails. An explicit kill-off preference is still respected.
+    if [[ ! -e $run/preference-off ]] && ! guard_armed; then
+        guard_set on || { rm -rf -- "$temp"; return 1; }
+    fi
     if ! selected=$(build_profile "$wanted" "$temp/provider.conf") ||
         ! make_host_profile "$temp/provider.conf" "$temp/host.conf"; then
         rm -rf -- "$temp"
@@ -137,12 +142,7 @@ connect_host() {
         cp -f "$profile" "$temp/previous.conf" || { rm -rf -- "$temp"; return 1; }
         saved=1
     fi
-    if [[ ! -e $run/preference-off ]] && ! guard_armed; then
-        guard_set on || { rm -rf -- "$temp"; return 1; }
-        armed_here=1
-    fi
     if ! tunnel_down; then
-        if (( armed_here )); then guard_set off || :; fi
         rm -rf -- "$temp"
         return 1
     fi
@@ -169,7 +169,6 @@ connect_host() {
         rm -f "$profile" "$run/region"
         guard_peer '' || :
     fi
-    if (( armed_here )); then guard_set off || :; fi
     rm -rf -- "$temp"
     return 1
 }
@@ -233,6 +232,12 @@ ensure_host_for_app() {
     fi
     publish_status || :
     tunnel_is_up || app_failure 'Could not restore the host VPN for this app. Check the VPN location and PIA login.'
+}
+
+boot_guard() {
+    # No networking here: this runs before NetworkManager at boot.
+    [[ -f $state/reconnect-on-boot && -s $state/boot-region ]] || return 0
+    acquire && guard_init && guard_set on && publish_status
 }
 
 maintain() {
@@ -362,6 +367,7 @@ emergency_open() {
 }
 
 case "${1:-}" in
+    boot-guard) boot_guard; exit $? ;;
     maintain) maintain; exit $? ;;
     emergency-open)
         acquire && emergency_open && publish_status

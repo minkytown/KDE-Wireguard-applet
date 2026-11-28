@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -uo pipefail
 umask 077
+export WALKER_VPN_FLATPAK=/usr/bin/flatpak
 socket=/run/walker-vpn.sock
 view=/run/walker-vpn-view
 root_dir=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..
@@ -25,11 +26,15 @@ request() {
 }
 
 read_status() {
+    local age
     if [[ -S $socket && -s $view/status.json ]]; then
-        printf '%s\n' "$(< "$view/status.json")"
-    else
-        request status
+        age=$(( EPOCHSECONDS - $(stat -c %Y "$view/status.json") ))
+        if (( age >= 0 && age <= 20 )); then
+            cat "$view/status.json"
+            return
+        fi
     fi
+    request status
 }
 
 notify() { notify-send -a 'PIA WireGuard' 'PIA WireGuard' "$*" || printf '%s\n' "$*" >&2; }
