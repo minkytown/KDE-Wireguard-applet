@@ -34,9 +34,17 @@ read_status() {
 
 notify() { notify-send -a 'PIA WireGuard' 'PIA WireGuard' "$*" || printf '%s\n' "$*" >&2; }
 
-# Routing changes require the application to be closed. The panel reports this
-# without sending signals to applications or discarding unsaved work.
-choose() { return 2; }
+# The routing engine asks only when a running app must close before a change.
+choose() {
+    local prompt=$1
+    shift
+    if kdialog --title 'Change app routing' --warningyesno "$prompt" \
+        --yes-label "$1" --no-label "$2"; then
+        printf '0\n'
+    else
+        printf '1\n'
+    fi
+}
 
 run_protected() {
     local mode=$1 kind=$2 id=$3 header key marker job code

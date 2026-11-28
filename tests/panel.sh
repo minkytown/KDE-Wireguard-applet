@@ -29,4 +29,6 @@ if panel_command app-set-json '../escape.desktop' on --mode vpn; then exit 1; fi
 if panel_command system-connect --region 'bad;command'; then exit 1; fi
 install_desktop() { return 1; }
 panel_command app-set-json org.example.One.desktop on --mode direct | jq -e '.error|length>0' >/dev/null
+install_desktop() { return 2; }
+panel_command app-set-json org.example.One.desktop on --mode direct | jq -e '.cancelled and (.error|contains("unchanged")) and (.apps[0].required == true)' >/dev/null
 printf 'Panel status, routing locations, failures and input validation passed.\n'

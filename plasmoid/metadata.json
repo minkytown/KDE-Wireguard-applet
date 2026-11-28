@@ -4,7 +4,7 @@
         "Name": "KDE Wireguard applet",
         "Description": "Connect this desktop to Private Internet Access",
         "Icon": "network-vpn",
-        "Version": "2.0.0",
+        "Version": "2.0.1",
         "License": "MIT",
         "Category": "System Information"
     },

@@ -57,7 +57,7 @@ panel_credentials() {
 }
 
 panel_command() {
-    local action=$1 result id setting mode region
+    local action=$1 result id setting mode region code
     shift
     case $action in
         panel-status)
@@ -92,9 +92,16 @@ panel_command() {
             desktop_id "$id" && [[ $setting == on || $setting == off ]] &&
                 [[ $region =~ ^[a-zA-Z0-9_-]{1,64}$ ]] || return 2
             [[ $setting != off ]] || mode=default
-            # Never close a user's running application to change its policy.
-            if ! result=$(install_desktop "$id" "$mode" "$region" 2>&1); then
-                panel_apps | jq -sc --arg error 'Quit the app completely before changing its route. Check the journal if the problem persists.' \
+            if result=$(install_desktop "$id" "$mode" "$region" 2>&1); then
+                :
+            else
+                code=$?
+                if (( code == 2 )); then
+                    panel_apps | jq -sc --arg error 'Routing unchanged; restart cancelled.' \
+                        '{apps:sort_by(.name|ascii_downcase),$error,cancelled:true}'
+                    return
+                fi
+                panel_apps | jq -sc --arg error 'Routing was not updated. Quit the app completely and try again. Check the journal if the problem persists.' \
                     '{apps:sort_by(.name|ascii_downcase),$error}'
                 return
             fi

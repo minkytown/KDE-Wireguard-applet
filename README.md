@@ -65,9 +65,12 @@ the upstream backend. The saved account login remains available.
 ## App routing
 
 **App routing…** keeps the searchable list and left-side switches from the
-original applet and adds native desktop applications. Quit an app completely
-before changing its route. The applet reports a failure if it is still running;
-it does not terminate applications or discard unsaved work.
+original applet and adds native desktop applications. If an app is running when
+you change its route or VPN location, a dialog offers **Close and reopen app**
+or **Cancel**. Save your work before accepting. The app must exit before the
+policy changes; it is then reopened with the new route. Cancel keeps the
+current app and route. If the app cannot close, the change is refused and its
+previous route remains.
 
 - **VPN-only:** enable **VPN required**. The location selector follows the host
   VPN by default, or chooses a dedicated **Optimal** or named PIA location.

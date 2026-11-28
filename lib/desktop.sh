@@ -254,7 +254,7 @@ close_app_before_change() {
         if flock -n "$app_lock"; then locked=true; fi
         running=$(app_processes "$id" "$kind" "$source") || {
             notify "Could not verify that $name is closed."
-            return 2
+            return 1
         }
         if [[ $locked == true ]]; then
             if [[ -z $running ]]; then
@@ -264,7 +264,8 @@ close_app_before_change() {
             flock -u "$app_lock" || return 1
         fi
         if (( deadline == 0 )); then
-            reply=$(choose "Reopen $name with its new VPN route? Save your work first" \
+            reply=$(choose "Reopen $name with its new network route? Save your work first.
+The route will change only after the app closes. Cancel keeps its current route." \
                 'Close and reopen app' 'Cancel') || return 2
             [[ $reply == 0 ]] || return 2
             deadline=$(( SECONDS + 15 ))
@@ -272,12 +273,12 @@ close_app_before_change() {
         fi
         if (( SECONDS >= deadline )); then
             notify "$name is still running. Its VPN routing was not changed."
-            return 2
+            return 1
         fi
         if [[ -n $running ]]; then
             windows=$(app_windows "$running") || {
                 notify "Could not check $name's windows. Its VPN routing was not changed."
-                return 2
+                return 1
             }
             if [[ -n $windows ]]; then
                 if [[ $requested_windows == false ]]; then

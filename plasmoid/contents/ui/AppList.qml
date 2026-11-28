@@ -74,7 +74,7 @@ ColumnLayout {
         readonly property string query: search.text.trim().toLowerCase()
 
         Layout.fillWidth: true
-        Layout.minimumHeight: Kirigami.Units.gridUnit * 8
+        Layout.minimumHeight: Kirigami.Units.gridUnit * 11
         Layout.preferredHeight: Layout.minimumHeight
         Layout.maximumHeight: Layout.minimumHeight
         clip: true
@@ -146,7 +146,7 @@ ColumnLayout {
         Layout.fillWidth: true
         text: page.errorMessage || (page.excludedMode
             ? "Excluded apps use the direct connection even when the system kill switch is on."
-            : "Native and Flatpak apps. Quit an app before changing its route.")
+            : "Native and Flatpak apps. Running apps prompt to close and reopen with the new route.")
         wrapMode: Text.Wrap
     }
 }
