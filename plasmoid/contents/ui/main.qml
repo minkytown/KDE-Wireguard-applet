@@ -190,9 +190,9 @@ PlasmoidItem {
     fullRepresentation: Loader {
         Layout.minimumWidth: Kirigami.Units.gridUnit * 18
         Layout.preferredWidth: Kirigami.Units.gridUnit * 21
-        Layout.minimumHeight: item ? Math.min(item.implicitHeight, Kirigami.Units.gridUnit * 23) : 0
-        Layout.preferredHeight: Layout.minimumHeight
-        Layout.maximumHeight: Layout.minimumHeight
+        Layout.minimumHeight: Kirigami.Units.gridUnit * 24
+        Layout.preferredHeight: Kirigami.Units.gridUnit * 26
+        Layout.maximumHeight: Kirigami.Units.gridUnit * 36
         sourceComponent: root.appsVisible ? appView : locationView
         onLoaded: {
             if (root.appsVisible)
@@ -273,8 +273,7 @@ PlasmoidItem {
                 id: regionList
                 Layout.fillWidth: true
                 Layout.minimumHeight: Kirigami.Units.gridUnit * 9
-                Layout.preferredHeight: Layout.minimumHeight
-                Layout.maximumHeight: Layout.minimumHeight
+                Layout.fillHeight: true
                 enabled: !root.busy
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds

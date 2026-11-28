@@ -75,8 +75,7 @@ ColumnLayout {
 
         Layout.fillWidth: true
         Layout.minimumHeight: Kirigami.Units.gridUnit * 11
-        Layout.preferredHeight: Layout.minimumHeight
-        Layout.maximumHeight: Layout.minimumHeight
+        Layout.fillHeight: true
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         PlasmaComponents.ScrollBar.vertical: PlasmaComponents.ScrollBar {}
